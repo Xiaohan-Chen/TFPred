@@ -2,6 +2,8 @@
 
 An official implementation for paper: TFPred: Learning Discriminative Representations from Unlabeled Data for Few-Label Rotating Machinery Fault Diagnosis.
 
+More codes are waiting for pushing after the paper is published.
+
 ### Requirements
 - python 3.9.12
 - numpy 1.23.1
