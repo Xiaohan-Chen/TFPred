@@ -120,6 +120,13 @@ def Flip(signal: torch.tensor):
     
     return signal_copy
 
+def PolarityInversion(signal: torch.tensor):
+    '''
+    Multiply the signal by -1.
+    '''
+    signal_copy = signal.clone()
+    return - signal_copy
+
 def random_waveform_transforms(signal: torch.tensor):
     '''
     Random waveform signal transformation
@@ -145,13 +152,13 @@ def random_waveform_transforms(signal: torch.tensor):
     if probability() > 0.7:
         signal = Gain(signal)
 
-    # 20% probability to reverse
+    # 20% probability to horizontal flip
     if probability() > 0.8:
         signal = Flip(signal)
     
-    # 
+    # 20% probability to vertical flip
     if probability() > 0.8:
-        signal = Fade(signal)
+        signal = PolarityInversion(signal)
 
     return signal
 
