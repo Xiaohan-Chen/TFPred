@@ -1,6 +1,6 @@
 ## TFPred: Learning Discriminative Representations from Unlabeled Data for Few-Label Rotating Machinery Fault Diagnosis
 
-An official implementation of paper: [TFPred: Learning Discriminative Representations from Unlabeled Data for Few-Label Rotating Machinery Fault Diagnosis](https://www.sciencedirect.com/science/article/pii/S0967066124000601).
+An official implementation of paper: [TFPred: Learning Discriminative Representations from Unlabeled Data for Few-Label Rotating Machinery Fault Diagnosis](https://www.sciencedirect.com/science/article/pii/S0967066124000601). The **pre-trained feature encoders are also provided in the folder './History'**, feel free to use them in your program.
 
 ```tex
 @article{CHEN2024105900,
