@@ -5,6 +5,7 @@ Email: cxh_bb@outlook.com
 
 import logging
 import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -12,24 +13,28 @@ from torch.utils.data import DataLoader
 from tqdm import *
 
 import Configs.TFPrediction as parms
-from Preparedata import PU
 from Datasets import Dataset
-from Models import ResNet1D
 from Losses.CrossCorrelation import CrossCorrelationLoss
+from Models import ResNet1D
+from Preparedata import PU
 from Utils import utils
 from Utils.logger import setlogger
 
+
 def load_data(args):
     datadict = PU.PUloader(args)
-    
+
     # shuffle the datasets
     np.random.seed(28)
-    datadict = {key:np.random.permutation(datadict[key]) for key in datadict.keys()}
+    datadict = {key: np.random.permutation(datadict[key]) for key in datadict.keys()}
 
     # split the dataset
-    train_datadict = {key:datadict[key][:args.num_train] for key in datadict.keys()}
-    val_datadict = {key:datadict[key][args.num_train : args.num_train + args.num_validation] for key in datadict.keys()}
-    test_datadict = {key:datadict[key][-args.num_test:] for key in datadict.keys()}
+    train_datadict = {key: datadict[key][: args.num_train] for key in datadict.keys()}
+    val_datadict = {
+        key: datadict[key][args.num_train : args.num_train + args.num_validation]
+        for key in datadict.keys()
+    }
+    test_datadict = {key: datadict[key][-args.num_test :] for key in datadict.keys()}
 
     # creat datasets
     train_dataset = Dataset.AugmentDasetsetTFPair(train_datadict)
@@ -40,22 +45,47 @@ def load_data(args):
     labeled_indices, _ = Dataset.relabel_dataset(args, evaluate_dataset)
     sampler = torch.utils.data.SubsetRandomSampler(labeled_indices)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,\
-        num_workers=args.num_workers, pin_memory=True, drop_last=True)
-    evaluate_loader = DataLoader(evaluate_dataset, batch_size=args.batch_size, sampler=sampler,\
-        num_workers=args.num_workers, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, \
-        num_workers=args.num_workers, pin_memory=True, drop_last=False)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, \
-        num_workers=args.num_workers, pin_memory=True, drop_last=False)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
+    evaluate_loader = DataLoader(
+        evaluate_dataset,
+        batch_size=args.batch_size,
+        sampler=sampler,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
 
     return train_loader, evaluate_loader, val_loader, test_loader
 
+
 # ===== Define encoder =====
 class ModelBase(nn.Module):
-    '''
+    """
     Encoder
-    '''
+    """
+
     def __init__(self, dim=128) -> None:
         super().__init__()
 
@@ -70,25 +100,52 @@ class ModelBase(nn.Module):
         x = self.fc(x)
         return x
 
+
 class TFPrediction(nn.Module):
     def __init__(self, dim=128) -> None:
         super().__init__()
         self.encoderT = ModelBase()
         self.encoderF = ModelBase()
 
-        self.PredictionF = nn.Sequential(
-            nn.Linear(dim, 256),
+        # projection heads (applied on the 512-d backbone features)
+        self.projectionT = nn.Sequential(
+            nn.Linear(512, 256, bias=True),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, dim, bias=True),
+        )
+        self.projectionF = nn.Sequential(
+            nn.Linear(512, 256, bias=True),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, dim, bias=True),
+        )
+
+        # prediction heads (SimSiam-style)
+        self.PredictorT = nn.Sequential(
+            nn.Linear(dim, 256, bias=True),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, dim),
+        )
+        self.PredictorF = nn.Sequential(
+            nn.Linear(dim, 256, bias=True),
             nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
             nn.Linear(256, dim),
         )
 
-
     def forward(self, x_t, x_f):
-        x_t = self.encoderT(x_t)
-        x_f = self.encoderF(x_f)
+        # backbone features (512-d); encoder.fc is kept for downstream use
+        x_t = self.encoderT.net(x_t)
+        x_f = self.encoderF.net(x_f)
 
-        x_f = self.PredictionF(x_f)
+        # project time / frequency representation into an embedding space
+        x_t = self.projectionT(x_t)
+        x_f = self.projectionF(x_f)
+
+        # predict the frequency branch (aligned to the time branch)
+        x_f = self.PredictorF(x_f)
 
         return x_t, x_f
 
@@ -143,13 +200,13 @@ def main_evaluate(args):
     checkpoint = torch.load("./History/TFPred_checkpoint.pth", map_location="cpu")
     for k in list(checkpoint.keys()):
         # retain only encoder up to before the embedding layer
-        if k.startswith('encoderT'):
+        if k.startswith("encoderT"):
             # remove prefix
-            checkpoint[k[len("encoderT."):]] = checkpoint[k]
+            checkpoint[k[len("encoderT.") :]] = checkpoint[k]
         # delete renamed or unused k
         del checkpoint[k]
     for k in list(checkpoint.keys()):
-        if k.startswith('fc'):
+        if k.startswith("fc"):
             del checkpoint[k]
     missing_keys, unexpected_keys = model.load_state_dict(checkpoint, strict=False)
     assert missing_keys == ["fc.weight", "fc.bias"]
@@ -158,23 +215,27 @@ def main_evaluate(args):
 
     classifier_parameters, model_parameters = [], []
     for name, param in model.named_parameters():
-        if name in {'fc.weight', 'fc.bias'}:
+        if name in {"fc.weight", "fc.bias"}:
             classifier_parameters.append(param)
         else:
             model_parameters.append(param)
-    
+
     criterion = nn.CrossEntropyLoss().cuda()
     param_groups = [
         dict(params=classifier_parameters, lr=args.classifier_lr),
-        dict(params=model_parameters, lr=args.backbone_lr)
+        dict(params=model_parameters, lr=args.backbone_lr),
     ]
     optimizer = torch.optim.SGD(param_groups, 0, momentum=0.9, weight_decay=5e-4)
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.tune_max_epochs)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, args.tune_max_epochs
+    )
 
     best_acc = 0.0
     logging.info(">>>>> TFPred Semi-Supervised Evaluation ...")
     for epoch in range(args.tune_max_epochs):
-        train_acc, train_loss = train_evaluate(args, model, evaluate_loader, optimizer, criterion, device)
+        train_acc, train_loss = train_evaluate(
+            args, model, evaluate_loader, optimizer, criterion, device
+        )
         val_acc, val_loss = test_evaluate(args, model, val_loader, criterion, device)
 
         lr_scheduler.step()
@@ -182,11 +243,14 @@ def main_evaluate(args):
         if val_acc > best_acc:
             best_acc = val_acc
             test_acc, _ = test_evaluate(args, model, test_loader, criterion, device)
-        
-        logging.info(f"Epoch: {epoch+1}/{args.tune_max_epochs}, train loss: {train_loss:.4f}, "
-        f"train_acc: {train_acc:6.2f}%, val loss: {val_loss:.4f}, val_acc: {val_acc:6.2f}%")
+
+        logging.info(
+            f"Epoch: {epoch + 1}/{args.tune_max_epochs}, train loss: {train_loss:.4f}, "
+            f"train_acc: {train_acc:6.2f}%, val loss: {val_loss:.4f}, val_acc: {val_acc:6.2f}%"
+        )
     logging.info(f"Best val acc: {best_acc:6.2f}%, test acc: {test_acc:6.2f}%")
-    logging.info("="*15+"TFPred Evaluation Done!"+"="*15)
+    logging.info("=" * 15 + "TFPred Evaluation Done!" + "=" * 15)
+
 
 def train(args, model, train_loader, criterion, optimizer, device):
     model.train()
@@ -205,7 +269,7 @@ def train(args, model, train_loader, criterion, optimizer, device):
             optimizer.step()
 
             lossmeter.update(loss.item())
-        
+
             pbar.update()
 
     return lossmeter.avg
@@ -220,14 +284,18 @@ def main(args):
     model = TFPrediction().to(device)
 
     # optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = torch.optim.SGD(
+        model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4
+    )
 
     # lr_scheduler
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.max_epochs)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, args.max_epochs
+    )
 
     # loss
     criterion = CrossCorrelationLoss()
-    
+
     logging.info(">>>>> TFPred Pre-training ...")
     best_loss = 1e9
     for epoch in range(args.max_epochs):
@@ -236,17 +304,19 @@ def main(args):
         # update lr
         if lr_scheduler is not None:
             lr_scheduler.step()
-        
+
         if train_loss < best_loss:
             best_loss = train_loss
             torch.save(model.state_dict(), "./History/TFPred_checkpoint.pth")
-        
-        logging.info(f"Epoch: {epoch+1:>3}/{args.max_epochs}, train_loss: {train_loss:.4f}, "
-                f"current lr: {lr_scheduler.get_last_lr()[0]:.6f}")
-    logging.info("="*15+"TFPred Pre-training Done!"+"="*15)
+
+        logging.info(
+            f"Epoch: {epoch + 1:>3}/{args.max_epochs}, train_loss: {train_loss:.4f}, "
+            f"current lr: {lr_scheduler.get_last_lr()[0]:.6f}"
+        )
+    logging.info("=" * 15 + "TFPred Pre-training Done!" + "=" * 15)
+
 
 if __name__ == "__main__":
-
     args = parms.parse_args()
 
     if not os.path.exists("./History"):
@@ -259,9 +329,9 @@ if __name__ == "__main__":
 
     # save the args
     for k, v in args.__dict__.items():
-        logging.info("{}: {}".format(k, v))
+        logging.info(f"{k}: {v}")
 
-    if args.mode  == "train":
+    if args.mode == "train":
         main(args)
     elif args.mode == "tune":
         main_evaluate(args)

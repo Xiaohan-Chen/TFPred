@@ -28,6 +28,8 @@ author = {Xiaohan Chen and Rui Yang and Yihao Xue and Baoye Song and Zidong Wang
 Run-to-failure bearing fault dataset:
 > Lessmeier, C., Kimotho, J. K., Zimmer, D., & Sextro, W. (2016). Condition monitoring of bearing damage in electromechanical drive systems by using motor current signals of electric motors: A benchmark data set for data-driven classification. Vol. 3, In PHM Society European Conference.
 
+Dataset link: [https://mb.uni-paderborn.de/kat/forschung/bearing-datacenter/data-sets-and-download](https://mb.uni-paderborn.de/kat/forschung/bearing-datacenter/data-sets-and-download)
+
 ### 3. Usage:
 
 Please replace the `datadir` with your dataset path.
